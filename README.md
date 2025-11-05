@@ -29,25 +29,28 @@ El sistema permite cargar inventarios mediante archivos CSV, almacenarlos en Dyn
 
 ```bash
 pip install boto3 python-dotenv
-
+```
 ---
 
 ## 🔑 Configuración del entorno
 
 1. Copiar la plantilla de entorno:
-   ```bash
+```bash
    cp .env.sample .env
+```
 
 2. Editar `.env` con las credenciales AWS y parámetros necesarios.
+```bash
     AWS_ACCESS_KEY_ID=TU_ACCESS_KEY
     AWS_SECRET_ACCESS_KEY=TU_SECRET_KEY
     AWS_SESSION_TOKEN=TU_SESSION_TOKEN
     AWS_DEFAULT_REGION=us-east-1
     SNS_SUBSCRIPTION_EMAIL=tu_correo@ejemplo.com
-
+```
 3. Despliegue automático de la infraestructura:
-   ```bash
+```bash
    python infra/scripts/setup.py
+```
    Al finalizar, se mostrarán un mensaje similar a este:
    ✅ Despliegue de infraestructura COMPLETO
     S3 Ingesta: s3://inventory-uploads-20251105-xxxxxx
@@ -57,8 +60,13 @@ pip install boto3 python-dotenv
     SNS Tópico: arn:aws:sns:us-east-1:xxxx:NoStock-xxxx
 
 4. Para introducir inventarios, subir archivos CSV al bucket de ingesta S3 mostrado.
+```bash
     aws s3 cp inventory-berlin.csv s3://inventory-uploads-YYYYMMDD-xxxxxx/
-    Verificación: aws dynamodb scan --table-name Inventory
+```
+    Verificación:
+```bash
+    aws dynamodb scan --table-name Inventory
+```
 
 5. Acceder al dashboard web:
    Abrir en el navegador la URL del bucket S3 web proporcionada tras el despliegue.
@@ -70,9 +78,9 @@ pip install boto3 python-dotenv
    - Comprobar que se recibe un email de alerta.
 
 8. Cuando termines, eliminar la infraestructura:
-   ```bash
+```bash
    python infra/scripts/teardown.py
-
+```
 ---
 ## 👨‍💻 Autor
 
