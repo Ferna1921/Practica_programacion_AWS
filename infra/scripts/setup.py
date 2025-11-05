@@ -41,6 +41,7 @@ sns = session.client("sns")
 sts = session.client("sts")
 iam = session.client("iam")
 apigw = session.client("apigatewayv2") # Para HTTP API
+ACCOUNT_ID = sts.get_caller_identity()["Account"]
 
 # ---------- Helpers ----------
 def unique_suffix(length=6):
@@ -166,7 +167,7 @@ def ensure_dynamodb_table(name):
 
 def build_lambda_zip_bytes(lambda_name: str) -> bytes:
     """Crea el paquete ZIP de la Lambda desde /lambdas/{lambda_name}/lambda_handler.py."""
-    source_dir = os.path.join("../../lambda_function", lambda_name)
+    source_dir = os.path.join("lambda_function", lambda_name)
     main_file = "lambda_handler.py"
     source_path = os.path.join(source_dir, main_file)
     
@@ -185,11 +186,13 @@ def build_lambda_zip_bytes(lambda_name: str) -> bytes:
     return buf.read()
 
 
-def ensure_lambda(function_name, role_arn, handler, code_path):
+def ensure_lambda(function_name, role_arn, handler, code_path, extra_env=None):
     """Crea o actualiza una función Lambda."""
-    # Nombre del Handler para todas: 'lambda_handler.lambda_handler'
     code_bytes = build_lambda_zip_bytes(code_path)
-    env_vars = {"DYNAMODB_TABLE_NAME": TABLE_NAME}
+    
+    env_vars = {"TABLE_NAME": TABLE_NAME}
+    if extra_env:
+        env_vars.update(extra_env)  # fusionar las variables extra
 
     try:
         resp = lambda_client.create_function(
@@ -205,14 +208,19 @@ def ensure_lambda(function_name, role_arn, handler, code_path):
         )
         print(f"[Lambda] Función creada: {function_name}")
     except lambda_client.exceptions.ResourceConflictException:
-        print(f"[Lambda] Función ya existe: {function_name}. Actualizando código...")
+        print(f"[Lambda] Función ya existe: {function_name}. Actualizando código y entorno...")
         lambda_client.update_function_code(
             FunctionName=function_name, ZipFile=code_bytes, Publish=True
+        )
+        lambda_client.update_function_configuration(
+            FunctionName=function_name,
+            Environment={"Variables": env_vars},
         )
         waiter = lambda_client.get_waiter("function_updated")
         waiter.wait(FunctionName=function_name)
         
     return lambda_client.get_function(FunctionName=function_name)["Configuration"]["FunctionArn"]
+
 
 
 def add_s3_trigger_to_lambda(bucket_name, lambda_arn, function_name):
@@ -367,21 +375,6 @@ if __name__ == "__main__":
     ensure_bucket(ingest_bucket, is_website=False)
     ensure_bucket(web_bucket, is_website=True)
 
-    # Subir el index.html (Asegúrate de tener la carpeta /web/index.html)
-    index_path = os.path.join("../../web", "index.html")
-    if os.path.exists(index_path):
-        s3.upload_file(
-            Filename=index_path,
-            Bucket=web_bucket,
-            Key="index.html",
-            ExtraArgs={"ContentType": "text/html; charset=utf-8"},
-        )
-        print(f"[S3] index.html subido a s3://{web_bucket}")
-    else:
-        print(f"❌ ADVERTENCIA: No se encontró {index_path}. El sitio web estará vacío. (Crea la carpeta 'web' y el archivo 'index.html').")
-        
-    website_url = get_website_url(web_bucket)
-    print(f"[S3] Website URL: {website_url}")
 
     # 5. Lambdas y Triggers
     
@@ -407,13 +400,105 @@ if __name__ == "__main__":
         function_name=lambda_c_name,
         role_arn=lambda_role_arn,
         handler="lambda_handler.lambda_handler",
-        code_path="notify_low_stock"
+        code_path="notify_low_stock",
+        extra_env={"TOPIC_ARN": sns_topic_arn}
     )
     dcc_mapping_uuid = ensure_dynamodb_stream_trigger(stream_arn, lambda_c_name)
 
     # 6. API Gateway (PENDIENTE)
     # Aquí iría la lógica para crear HTTP API Gateway, la integración
     # con Lambda B y las rutas /items y /items/{store} con CORS habilitado.
+    print("\n[API Gateway] Creando HTTP API e integración con Lambda B...")
+
+    apigw_client = boto3.client("apigatewayv2", region_name=REGION)
+
+    # 1️⃣ Crear la API
+    api_resp = apigw_client.create_api(
+        Name=f"inventory-api-{suffix}",
+        ProtocolType="HTTP",
+        CorsConfiguration={
+            "AllowOrigins": ["*"],
+            "AllowMethods": ["GET"],
+            "AllowHeaders": ["*"]
+        }
+    )
+    api_id = api_resp["ApiId"]
+    print(f"✅ API creada: {api_id}")
+
+    # 2️⃣ Crear la integración con Lambda B
+    lambda_b_uri = f"arn:aws:apigateway:{REGION}:lambda:path/2015-03-31/functions/{lambda_b_arn}/invocations"
+
+    integration = apigw.create_integration(
+        ApiId=api_id,
+        IntegrationType="AWS_PROXY",
+        IntegrationUri=lambda_b_uri,
+        PayloadFormatVersion="2.0"  # ← ¡añadido!
+    )
+
+    integration_id = integration["IntegrationId"]
+    print(f"✅ Integración creada con Lambda B: {integration_id}")
+
+
+    # 3️⃣ Crear las rutas /items y /items/{store}
+    apigw_client.create_route(
+        ApiId=api_id,
+        RouteKey="GET /items",
+        Target=f"integrations/{integration_id}"
+    )
+    apigw_client.create_route(
+        ApiId=api_id,
+        RouteKey="GET /items/{store}",
+        Target=f"integrations/{integration_id}"
+    )
+
+    # 4️⃣ Crear el stage (despliegue automático)
+    stage = apigw_client.create_stage(
+        ApiId=api_id,
+        StageName="prod",
+        AutoDeploy=True
+    )
+
+    api_url = f"https://{api_id}.execute-api.{REGION}.amazonaws.com/prod"
+    print(f"🌐 API disponible en: {api_url}")
+
+    # 5️⃣ Dar permiso a API Gateway para invocar la Lambda
+    lambda_client.add_permission(
+        FunctionName=lambda_b_name,
+        StatementId="apigw_invoke",
+        Action="lambda:InvokeFunction",
+        Principal="apigateway.amazonaws.com",
+        SourceArn=f"arn:aws:execute-api:{REGION}:{ACCOUNT_ID}:{api_id}/*/*",
+    )
+    print("✅ Permisos de invocación añadidos a Lambda B")
+
+    # Subir el index.html con la URL del API Gateway actualizada dinámicamente
+    index_path = os.path.join("web", "index.html")
+    if os.path.exists(index_path):
+        with open(index_path, "r", encoding="utf-8") as f:
+            html = f.read()
+
+        # Reemplazar el marcador de API con la URL real
+        html = html.replace("https://<API_GATEWAY_URL>/items", f"{api_url}/items")
+
+        # Guardar versión temporal antes de subir
+        tmp_path = "index_temp.html"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            f.write(html)
+
+        s3.upload_file(
+            Filename=tmp_path,
+            Bucket=web_bucket,
+            Key="index.html",
+            ExtraArgs={"ContentType": "text/html; charset=utf-8"},
+        )
+        os.remove(tmp_path)
+
+        print(f"[S3] index.html actualizado con URL del API y subido a s3://{web_bucket}")
+    else:
+        print(f"❌ ADVERTENCIA: No se encontró {index_path}. El sitio web estará vacío. (Crea la carpeta 'web' y el archivo 'index.html').")
+
+    website_url = get_website_url(web_bucket)
+    print(f"[S3] Website URL: {website_url}")
 
     # 7. Guardar Recursos (para Teardown)
     try:
@@ -434,7 +519,7 @@ if __name__ == "__main__":
     except dbm_error as e:
         print(f"❌ ADVERTENCIA: No se pudo guardar la información de recursos en '{DB_PATH}'. Error: {e}")
 
-    print("\n✅ Despliegue de infraestructura COMPLETO (API Gateway pendiente).")
+    print("\n✅ Despliegue de infraestructura COMPLETO.")
     print(f"S3 Ingesta: s3://{ingest_bucket}")
     print(f"S3 Web/Dashboard: {website_url}")
     print(f"DynamoDB: {TABLE_NAME}")

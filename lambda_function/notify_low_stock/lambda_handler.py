@@ -6,7 +6,7 @@ TOPIC_ARN = os.environ["TOPIC_ARN"]
 
 def lambda_handler(event, context):
     for record in event["Records"]:
-        if record["eventName"] == "INSERT":
+        if record["eventName"] in ("INSERT","MODIFY"):
             item = record["dynamodb"]["NewImage"]
             if int(item["Count"]["N"]) < 5:
                 msg = f"⚠️ Low stock: {item['Item']['S']} in {item['Store']['S']} ({item['Count']['N']} left)"
