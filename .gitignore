@@ -1,3 +1,7 @@
 # .gitignore
 # Credenciales de entorno
 .env
+aws_resources.db*
+*.dat
+*.bak
+*.dir
