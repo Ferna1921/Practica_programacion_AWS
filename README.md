@@ -53,17 +53,17 @@ pip install boto3 python-dotenv
 ```
    Al finalizar, se mostrarán un mensaje similar a este:
    ✅ Despliegue de infraestructura COMPLETO
-    S3 Ingesta: s3://inventory-uploads-20251105-xxxxxx
-    S3 Web/Dashboard: http://inventory-web-20251105-xxxxxx.s3-website-us-east-1.amazonaws.com
-    DynamoDB: Inventory
-    🌐 API disponible en: https://v94xf8g3c8.execute-api.us-east-1.amazonaws.com/prod
-    SNS Tópico: arn:aws:sns:us-east-1:xxxx:NoStock-xxxx
+   S3 Ingesta: s3://inventory-uploads-20251105-xxxxxx
+   S3 Web/Dashboard: http://inventory-web-20251105-xxxxxx.s3-website-us-east-1.amazonaws.com
+   DynamoDB: Inventory
+   🌐 API disponible en: https://v94xf8g3c8.execute-api.us-east-1.amazonaws.com/prod
+   SNS Tópico: arn:aws:sns:us-east-1:xxxx:NoStock-xxxx
 
 4. Para introducir inventarios, subir archivos CSV al bucket de ingesta S3 mostrado.
 ```bash
     aws s3 cp inventory-berlin.csv s3://inventory-uploads-YYYYMMDD-xxxxxx/
 ```
-    Verificación:
+Verificación:
 ```bash
     aws dynamodb scan --table-name Inventory
 ```
@@ -85,6 +85,7 @@ pip install boto3 python-dotenv
 ## 👨‍💻 Autor
 
 Aitor Fernández de Retana
+
 📧 aitor.fdezderetana@opendeusto.es
 
 
