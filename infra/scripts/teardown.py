@@ -12,13 +12,13 @@ load_dotenv()
 REGION = os.getenv("AWS_DEFAULT_REGION", "us-east-1")
 DB_PATH = "aws_resources.db"
 
-# Nombres base a buscar para la eliminación global
+# Nombres base a buscar para la eliminación
 BUCKET_PREFIXES = ["inventory-uploads-", "inventory-web-"]
 TABLE_NAME = "Inventory"
 SNS_TOPIC_PREFIX = "NoStock-"
 LAMBDA_PREFIXES = ["load_inventory-", "get_inventory_api-", "notify_low_stock-"]
 
-# El rol que se usa en el lab. Solo se limpiarán sus políticas, NO se eliminará.
+# El rol que se usa en el lab.
 ROLE_NAME = os.getenv("LAMBDA_ROLE_NAME", "voclabs-LabRole") 
 
 try:
@@ -46,7 +46,7 @@ def delete_bucket_globally(bucket_name):
 
     print(f"Buscando dependencias para s3://{bucket_name}...")
     try:
-        # 1. Eliminar configuración de notificación (para Lambda A)
+        # Eliminar configuración de notificación (para Lambda A)
         try:
             s3.put_bucket_notification_configuration(
                 Bucket=bucket_name,
@@ -55,7 +55,7 @@ def delete_bucket_globally(bucket_name):
         except ClientError:
             pass
             
-        # 2. Eliminar política y BPA
+        # Eliminar política y BPA
         try:
              s3.delete_bucket_policy(Bucket=bucket_name)
         except ClientError:
@@ -65,11 +65,9 @@ def delete_bucket_globally(bucket_name):
         except ClientError:
             pass
 
-        # 3. Eliminar todos los objetos (¡CRUCIAL!)
-        # Use s3_resource for object and version deletion
+        # Eliminar todos los objetos
         bucket = s3_resource.Bucket(bucket_name)
         
-        # ⚠️ CORRECTED LOGIC FOR VERSIONED OBJECTS
         # This single call deletes both objects and versioned history efficiently.
         response = bucket.objects.all().delete()
         if response and 'Errors' in response[0]:
@@ -97,7 +95,7 @@ def delete_bucket_globally(bucket_name):
 def delete_lambda_globally(function_name):
     """Busca y elimina una función Lambda, junto con sus ESMs (si los tiene)."""
     try:
-        # 1. Eliminar Mapeos de Fuente de Eventos (DDB Streams/SQS)
+        # Eliminar Mapeos de Fuente de Eventos (DDB Streams/SQS)
         mappings = lambda_client.list_event_source_mappings(
             FunctionName=function_name
         ).get("EventSourceMappings", [])
@@ -106,7 +104,7 @@ def delete_lambda_globally(function_name):
             print(f"[Lambda] Mapeo de eventos eliminado para {function_name} (UUID: {mapping['UUID']})")
         time.sleep(1) 
         
-        # 2. Eliminar la función
+        # Eliminar la función
         lambda_client.delete_function(FunctionName=function_name)
         print(f"✅ [Lambda] Función eliminada: {function_name}")
     except ClientError as e:
@@ -146,7 +144,7 @@ def delete_sns_topic_globally(topic_arn):
 def delete_iam_policies(role_name):
     """Limpia las políticas in-line y adjuntas creadas por el script."""
     try:
-        # 1. Desadjuntar políticas adjuntas (como AWSLambdaBasicExecutionRole)
+        # Desadjuntar políticas adjuntas (como AWSLambdaBasicExecutionRole)
         attached_policies = iam.list_attached_role_policies(RoleName=role_name)['AttachedPolicies']
         for policy in attached_policies:
             # Desadjuntamos solo si no es una política esencial de Lab que otros usan.
@@ -154,7 +152,7 @@ def delete_iam_policies(role_name):
                 iam.detach_role_policy(RoleName=role_name, PolicyArn=policy['PolicyArn'])
                 print(f"[IAM] Política básica desadjuntada: {policy['PolicyName']}")
 
-        # 2. Eliminar políticas en línea (PolicyA, PolicyB, PolicyC)
+        # Eliminar políticas en línea (PolicyA, PolicyB, PolicyC)
         inline_policies = iam.list_role_policies(RoleName=role_name)['PolicyNames']
         for policy_name in inline_policies:
             if policy_name.startswith('PolicyA-') or policy_name.startswith('PolicyB-') or policy_name.startswith('PolicyC-'):
@@ -172,7 +170,7 @@ if __name__ == "__main__":
     
     print("\n⚠️ INICIANDO TEARDOWN GLOBAL: Eliminando TODOS los recursos de Inventario ⚠️")
     
-    # --- 1. Eliminación de Buckets (Global) ---
+    # --- 1. Eliminación de Buckets---
     print("\n--- 1. ELIMINANDO S3 BUCKETS ---")
     
     # Listar todos los buckets y filtrar por prefijo
@@ -187,7 +185,7 @@ if __name__ == "__main__":
             print(f"❌ Error al listar buckets: {e}")
 
 
-    # --- 2. Eliminación de Lambdas (Global) ---
+    # --- 2. Eliminación de Lambdas---
     print("\n--- 2. ELIMINANDO FUNCIONES LAMBDA ---")
     for prefix in LAMBDA_PREFIXES:
         try:
@@ -220,7 +218,6 @@ if __name__ == "__main__":
 
     # --- 5. Limpieza de Políticas IAM ---
     print("\n--- 5. LIMPIANDO POLÍTICAS IAM ---")
-    # Limpia las políticas CREADAS por el script del rol del Lab (NO elimina el rol)
     delete_iam_policies(ROLE_NAME) 
 
     # --- 6. Limpieza de Archivos Locales ---

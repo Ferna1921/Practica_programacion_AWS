@@ -27,8 +27,6 @@ SNS_TOPIC_BASE = "NoStock"              # SNS
 LAMBDA_A_NAME = "load_inventory"
 LAMBDA_B_NAME = "get_inventory_api"
 LAMBDA_C_NAME = "notify_low_stock"
-
-# **SOLUCIÓN AL ERROR IAM**: Usamos un rol fijo que asumimos existe en el lab.
 ROLE_NAME = "LabRole"
 SNS_SUBSCRIPTION_EMAIL = os.getenv("SNS_SUBSCRIPTION_EMAIL")
 
@@ -40,7 +38,7 @@ lambda_client = session.client("lambda")
 sns = session.client("sns")
 sts = session.client("sts")
 iam = session.client("iam")
-apigw = session.client("apigatewayv2") # Para HTTP API
+apigw = session.client("apigatewayv2")
 ACCOUNT_ID = sts.get_caller_identity()["Account"]
 
 # ---------- Helpers ----------
@@ -56,7 +54,6 @@ def bucket_exists(name):
     except ClientError as e:
         if e.response['Error']['Code'] == '404':
              return False
-        # Para cualquier otro error (permisos, etc.), asumimos que no es accesible/no existe
         return False
 
 def create_bucket(name):
@@ -77,7 +74,7 @@ def disable_bucket_bpa(bucket):
             PublicAccessBlockConfiguration={
                 "BlockPublicAcls": False,
                 "IgnorePublicAcls": False,
-                "BlockPublicPolicy": False, # Permite aplicar la política pública
+                "BlockPublicPolicy": False,
                 "RestrictPublicBuckets": False,
             },
         )
@@ -174,13 +171,9 @@ def build_lambda_zip_bytes(lambda_name: str) -> bytes:
     if not os.path.isfile(source_path):
         raise FileNotFoundError(f"No se encontró el archivo de la Lambda en: {source_path}")
 
-    # Crear ZIP en memoria
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        # Guardar el código en la RAÍZ del zip
         z.write(source_path, arcname=main_file)
-        
-        # Implementar lógica para incluir dependencias si es necesario (e.g., pandas)
 
     buf.seek(0)
     return buf.read()
@@ -192,7 +185,7 @@ def ensure_lambda(function_name, role_arn, handler, code_path, extra_env=None):
     
     env_vars = {"TABLE_NAME": TABLE_NAME}
     if extra_env:
-        env_vars.update(extra_env)  # fusionar las variables extra
+        env_vars.update(extra_env)
 
     try:
         resp = lambda_client.create_function(
@@ -229,8 +222,7 @@ def add_s3_trigger_to_lambda(bucket_name, lambda_arn, function_name):
     It first grants permission to S3 to invoke the Lambda and then configures the bucket notification.
     """
     
-    # 1. Grant permission to S3 to invoke the Lambda
-    # Principal MUST be 's3.amazonaws.com'
+    # Grant permission to S3 to invoke the Lambda
     principal = "s3.amazonaws.com"
     statement_id = f"s3-invoke-permission-{function_name}-{bucket_name}"
 
@@ -240,34 +232,28 @@ def add_s3_trigger_to_lambda(bucket_name, lambda_arn, function_name):
             StatementId=statement_id,
             Action="lambda:InvokeFunction",
             Principal=principal,
-            SourceArn=f"arn:aws:s3:::{bucket_name}", # Restrict invocation to THIS bucket
-            # SourceAccount is good practice but not strictly required by Boto3:
-            # SourceAccount=sts.get_caller_identity()["Account"] 
+            SourceArn=f"arn:aws:s3:::{bucket_name}",
         )
-        print(lambda_arn)  # asegurarte que sea ARN completo
+        print(lambda_arn)
         print(f"[Lambda] Permission for S3 invocation granted to {function_name}")
         time.sleep(5) 
         
     except ClientError as e:
-        # Ignore if the permission already exists (idempotency)
         if "StatementId already exists" in str(e):
             print(f"[Lambda] S3 invocation permission already exists for {function_name}")
         else:
             print(f"❌ Error adding S3 invocation permission: {e}")
             raise
 
-    # 2. Configure the bucket notification (S3 PUT)
+    # Configure the bucket notification (S3 PUT)
     config = {
         'LambdaFunctionConfigurations': [
             {
-                # Use the FULL ARN of the Lambda function
                 'LambdaFunctionArn': lambda_arn, 
-                # Trigger on all object creation events
                 'Events': ['s3:ObjectCreated:*'], 
                 'Filter': {
                     'Key': {
                         'FilterRules': [
-                            # Only trigger for .csv files (as per practice objective)
                             {'Name': 'suffix', 'Value': '.csv'} 
                         ]
                     }
@@ -275,7 +261,6 @@ def add_s3_trigger_to_lambda(bucket_name, lambda_arn, function_name):
             }
         ]
     }
-    # This is the line that was failing due to the timing issue:
     s3.put_bucket_notification_configuration(
         Bucket=bucket_name,
         NotificationConfiguration=config
@@ -316,7 +301,6 @@ def ensure_dynamodb_stream_trigger(stream_arn, function_name, enabled=True, batc
     
     if existing:
         uuid = existing[0]["UUID"]
-        # Actualizar, si es necesario, para idempotencia
         lambda_client.update_event_source_mapping(
             UUID=uuid, 
             Enabled=enabled, 
@@ -325,7 +309,6 @@ def ensure_dynamodb_stream_trigger(stream_arn, function_name, enabled=True, batc
         print(f"[Lambda] Trigger DDB Streams actualizado (UUID={uuid})")
         return uuid
     
-    # Crear un nuevo Mapeo
     resp = lambda_client.create_event_source_mapping(
         EventSourceArn=stream_arn,
         FunctionName=function_name,
@@ -362,21 +345,21 @@ if __name__ == "__main__":
     
     print(f"⚙️ Iniciando despliegue con sufijo: {suffix} en región: {REGION}")
     
-    # 1. IAM Role (Resuelve el error de permisos IAM)
+    # IAM Role
     lambda_role_arn = labrole_arn()
 
-    # 2. DynamoDB Table (Idempotente)
+    # DynamoDB Table
     table_arn, stream_arn = ensure_dynamodb_table(TABLE_NAME)
 
-    # 3. SNS Topic (Idempotente + Suscripción)
+    # SNS Topic
     sns_topic_arn = ensure_sns_topic_and_subscribe(topic_name)
 
-    # 4. S3 Buckets (Ingesta y Web)
+    # S3 Buckets
     ensure_bucket(ingest_bucket, is_website=False)
     ensure_bucket(web_bucket, is_website=True)
 
 
-    # 5. Lambdas y Triggers
+    # Lambdas y Triggers
     
     # Lambda A: load_inventory (S3 -> DDB)
     lambda_a_arn = ensure_lambda(
@@ -405,14 +388,12 @@ if __name__ == "__main__":
     )
     dcc_mapping_uuid = ensure_dynamodb_stream_trigger(stream_arn, lambda_c_name)
 
-    # 6. API Gateway (PENDIENTE)
-    # Aquí iría la lógica para crear HTTP API Gateway, la integración
-    # con Lambda B y las rutas /items y /items/{store} con CORS habilitado.
+    # API Gateway
     print("\n[API Gateway] Creando HTTP API e integración con Lambda B...")
 
     apigw_client = boto3.client("apigatewayv2", region_name=REGION)
 
-    # 1️⃣ Crear la API
+    # Crear la API
     api_resp = apigw_client.create_api(
         Name=f"inventory-api-{suffix}",
         ProtocolType="HTTP",
@@ -425,21 +406,21 @@ if __name__ == "__main__":
     api_id = api_resp["ApiId"]
     print(f"✅ API creada: {api_id}")
 
-    # 2️⃣ Crear la integración con Lambda B
+    # Crear la integración con Lambda B
     lambda_b_uri = f"arn:aws:apigateway:{REGION}:lambda:path/2015-03-31/functions/{lambda_b_arn}/invocations"
 
     integration = apigw.create_integration(
         ApiId=api_id,
         IntegrationType="AWS_PROXY",
         IntegrationUri=lambda_b_uri,
-        PayloadFormatVersion="2.0"  # ← ¡añadido!
+        PayloadFormatVersion="2.0"
     )
 
     integration_id = integration["IntegrationId"]
     print(f"✅ Integración creada con Lambda B: {integration_id}")
 
 
-    # 3️⃣ Crear las rutas /items y /items/{store}
+    # Crear las rutas /items y /items/{store}
     apigw_client.create_route(
         ApiId=api_id,
         RouteKey="GET /items",
@@ -451,7 +432,7 @@ if __name__ == "__main__":
         Target=f"integrations/{integration_id}"
     )
 
-    # 4️⃣ Crear el stage (despliegue automático)
+    # Crear el stage (despliegue automático)
     stage = apigw_client.create_stage(
         ApiId=api_id,
         StageName="prod",
@@ -461,7 +442,7 @@ if __name__ == "__main__":
     api_url = f"https://{api_id}.execute-api.{REGION}.amazonaws.com/prod"
     print(f"🌐 API disponible en: {api_url}")
 
-    # 5️⃣ Dar permiso a API Gateway para invocar la Lambda
+    # Dar permiso a API Gateway para invocar la Lambda
     lambda_client.add_permission(
         FunctionName=lambda_b_name,
         StatementId="apigw_invoke",
@@ -471,16 +452,14 @@ if __name__ == "__main__":
     )
     print("✅ Permisos de invocación añadidos a Lambda B")
 
-    # Subir el index.html con la URL del API Gateway actualizada dinámicamente
+    # Subir el index.html con la URL del API Gateway
     index_path = os.path.join("web", "index.html")
     if os.path.exists(index_path):
         with open(index_path, "r", encoding="utf-8") as f:
             html = f.read()
 
-        # Reemplazar el marcador de API con la URL real
         html = html.replace("https://<API_GATEWAY_URL>/items", f"{api_url}/items")
 
-        # Guardar versión temporal antes de subir
         tmp_path = "index_temp.html"
         with open(tmp_path, "w", encoding="utf-8") as f:
             f.write(html)
@@ -500,7 +479,7 @@ if __name__ == "__main__":
     website_url = get_website_url(web_bucket)
     print(f"[S3] Website URL: {website_url}")
 
-    # 7. Guardar Recursos (para Teardown)
+    # Guardar Recursos
     try:
         with shelve.open(DB_PATH) as db:
             db["UNIQUE_SUFFIX"] = suffix

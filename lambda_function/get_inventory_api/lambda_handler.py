@@ -14,7 +14,6 @@ def convert_decimal(obj):
     elif isinstance(obj, dict):
         return {k: convert_decimal(v) for k, v in obj.items()}
     elif isinstance(obj, Decimal):
-        # Si el valor tiene decimales, convertir a float; si no, a int
         return int(obj) if obj % 1 == 0 else float(obj)
     else:
         return obj
@@ -30,8 +29,7 @@ def lambda_handler(event, context):
     else:
         response = table.scan()
         items = response["Items"]
-
-    # Convertir Decimals antes de devolver
+        
     clean_items = convert_decimal(items)
 
     return {

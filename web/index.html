@@ -23,7 +23,6 @@
   </table>
 
   <script>
-    // ⚙️ El setup.py reemplazará automáticamente esta línea con la URL real del API
     const API_URL = "https://<API_GATEWAY_URL>/items";
 
     async function loadData() {
@@ -33,7 +32,7 @@
         const data = await res.json();
 
         const tbody = document.querySelector("#inventoryTable tbody");
-        tbody.innerHTML = ""; // limpiar antes de recargar
+        tbody.innerHTML = "";
         data.forEach(row => {
           tbody.innerHTML += `
             <tr>
