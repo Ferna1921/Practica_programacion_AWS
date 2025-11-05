@@ -1,32 +1,57 @@
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
   <meta charset="UTF-8">
   <title>Inventory Dashboard</title>
   <style>
-    body { font-family: Arial; margin: 40px; }
-    table { border-collapse: collapse; width: 50%; }
-    th, td { border: 1px solid #aaa; padding: 8px; }
+    body { font-family: Arial, sans-serif; margin: 40px; background: #fafafa; }
+    h2 { color: #333; }
+    table { border-collapse: collapse; width: 60%; margin-top: 20px; }
+    th, td { border: 1px solid #aaa; padding: 8px; text-align: left; }
+    th { background-color: #ddd; }
+    tr:nth-child(even) { background-color: #f2f2f2; }
   </style>
 </head>
 <body>
   <h2>Inventory Dashboard</h2>
+
   <table id="inventoryTable">
-    <thead><tr><th>Store</th><th>Item</th><th>Count</th></tr></thead>
+    <thead>
+      <tr><th>Store</th><th>Item</th><th>Count</th></tr>
+    </thead>
     <tbody></tbody>
   </table>
 
   <script>
+    // ⚙️ El setup.py reemplazará automáticamente esta línea con la URL real del API
+    const API_URL = "https://<API_GATEWAY_URL>/items";
+
     async function loadData() {
-      const res = await fetch("https://<API_GATEWAY_URL>/items");
-      const data = await res.json();
-      const tbody = document.querySelector("#inventoryTable tbody");
-      data.forEach(row => {
-        tbody.innerHTML += `<tr><td>${row.Store}</td><td>${row.Item}</td><td>${row.Count}</td></tr>`;
-      });
+      try {
+        const res = await fetch(API_URL);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        const tbody = document.querySelector("#inventoryTable tbody");
+        tbody.innerHTML = ""; // limpiar antes de recargar
+        data.forEach(row => {
+          tbody.innerHTML += `
+            <tr>
+              <td>${row.Store}</td>
+              <td>${row.Item}</td>
+              <td>${row.Count}</td>
+            </tr>`;
+        });
+      } catch (err) {
+        console.error("❌ Error cargando inventario:", err);
+        const tbody = document.querySelector("#inventoryTable tbody");
+        tbody.innerHTML = `<tr><td colspan="3" style="color:red;">Error cargando datos</td></tr>`;
+      }
     }
+
     loadData();
   </script>
 </body>
 </html>
+
 
