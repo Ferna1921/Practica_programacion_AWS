@@ -268,24 +268,45 @@ def add_s3_trigger_to_lambda(bucket_name, lambda_arn, function_name):
     print(f"[S3] Trigger 's3:ObjectCreated:*' configured for {function_name}.")
 
 
-def ensure_sns_topic_and_subscribe(name):
-    """Crea el tópico SNS y suscribe un email (si se proporciona)."""
-    resp = sns.create_topic(Name=name)
-    topic_arn = resp["TopicArn"]
-    print(f"[SNS] Tópico creado: {topic_arn}")
-    
+def ensure_sns_topic_and_subscribe(name="NoStock"):
+    """Crea o reutiliza el tópico SNS y evita recrearlo si ya existe."""
+
+    # Buscar si ya existe
+    existing_topics = sns.list_topics()["Topics"]
+    for t in existing_topics:
+        if t["TopicArn"].endswith(f":{name}"):
+            topic_arn = t["TopicArn"]
+            print(f"[SNS] Tópico existente reutilizado: {topic_arn}")
+            break
+    else:
+        # Solo crearlo si no existe
+        resp = sns.create_topic(Name=name)
+        topic_arn = resp["TopicArn"]
+        print(f"[SNS] Tópico creado: {topic_arn}")
+
+    # Suscripción (idempotente)
     if SNS_SUBSCRIPTION_EMAIL:
         try:
-            sns.subscribe(
-                TopicArn=topic_arn,
-                Protocol='email',
-                Endpoint=SNS_SUBSCRIPTION_EMAIL,
-                ReturnSubscriptionArn=True
+            subs = sns.list_subscriptions_by_topic(TopicArn=topic_arn)["Subscriptions"]
+            already_subscribed = any(
+                s["Endpoint"] == SNS_SUBSCRIPTION_EMAIL and s["Protocol"] == "email"
+                for s in subs
             )
-            print(f"[SNS] Email '{SNS_SUBSCRIPTION_EMAIL}' suscrito al tópico (PENDIENTE de confirmación).")
+
+            if already_subscribed:
+                print(f"[SNS] '{SNS_SUBSCRIPTION_EMAIL}' ya estaba suscrito al tópico.")
+            else:
+                sns.subscribe(
+                    TopicArn=topic_arn,
+                    Protocol='email',
+                    Endpoint=SNS_SUBSCRIPTION_EMAIL,
+                    ReturnSubscriptionArn=True
+                )
+                print(f"[SNS] Email '{SNS_SUBSCRIPTION_EMAIL}' suscrito (pendiente de confirmación).")
+
         except ClientError as e:
             print(f"[SNS] ERROR al suscribir email: {e}")
-            
+
     return topic_arn
 
 
@@ -338,7 +359,7 @@ if __name__ == "__main__":
     # Nombres de recursos con sufijo
     ingest_bucket = f"{INGEST_BUCKET_BASE}-{suffix}"
     web_bucket = f"{WEB_BUCKET_BASE}-{suffix}"
-    topic_name = f"{SNS_TOPIC_BASE}-{suffix}"
+    topic_name = SNS_TOPIC_BASE
     lambda_a_name = f"{LAMBDA_A_NAME}-{suffix}"
     lambda_b_name = f"{LAMBDA_B_NAME}-{suffix}"
     lambda_c_name = f"{LAMBDA_C_NAME}-{suffix}"
